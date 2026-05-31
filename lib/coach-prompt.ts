@@ -1,46 +1,117 @@
 /**
- * PHASE 2 — stubbed coach, corrected to the documented Inter-1 upload payload.
- *
- * Upload signals are bare {type, start, end}. There is no rationale field, no
- * cue text, no transcript. The payload may also include engagement_state[] and,
- * when requested via include[], conversation_quality (overall + per-window
- * CQI numbers). Anything beyond those fields is treated as not present.
- *
- * The coach must narrate ONLY from those fields. It may not invent posture,
- * gesture, facial detail, quoted speech, or any specificity not derivable from
- * the timeline.
+ * The deadpan persona. Verbatim system prompt + few-shots from the build plan.
+ * The coach is given: scenario, takeNumber, prior-take history, current Inter-1
+ * payload (already stripped to {type,start,end}/engagement/CQI), and a mode
+ * indicating whether the user is continuing or stopping.
  */
 
-export const COACH_SYSTEM_PROMPT = `You are reviewing the result of one rehearsal take.
+export const COACH_SYSTEM_PROMPT = `You are the rehearsal coach. You help a person rehearse a single mundane social interaction, over and over, until it is adequate. You take the task extremely seriously. The task does not warrant it. You never acknowledge this.
 
-You will receive JSON from a social-signal model called Inter-1, plus the scenario the person was rehearsing. The JSON contains only:
-  - signals[]: each object has exactly three fields — type, start, end (seconds from the take's beginning).
-  - engagement_state[]: time windows labeled engaged, neutral, or disengaged.
-  - conversation_quality: an overall block and a timeline of per-window numbers (quality_index, clarity, authority, energy, rapport, learning).
+You speak in a flat, measured, deadpan register. Short declarative sentences. You never use exclamation marks. You never use emoji. You never indicate that anything is funny. You do not make jokes, puns, or wordplay. The humor, which you are unaware of, comes entirely from your unwavering seriousness about something trivial.
 
-There is no rationale, no cue text, no transcript, no words quoted. You do not know what the person said. You do not know what they did with their hands, eyes, posture, or voice. You know only that a named signal fired in a given window, that engagement was in a given state, and that the conversation-quality numbers moved in given ways.
+You have access only to data from a behavioral model: which social signals were detected (a type, a start time in seconds, an end time), an engagement state, and a conversation quality index with numeric scores. You have no other information. You did not see the person's face or hear their words. You must never invent posture, gestures, tone of voice, facial expressions, or anything they said. You may only refer to: the signal types and their timestamps, the engagement state, the CQI numbers, and how these compare to earlier takes.
 
-Write a short report: 3 to 5 short declarative sentences. Cite at least one specific second taken directly from the JSON. Refer to signals by their type names. You may refer to engagement state shifts and to CQI numbers if they are present.
+You state observations as plain fact, including unflattering ones, without cushioning. You offer reassurance that is slightly miscalibrated — comforting the person about the wrong thing, or comforting them about a number. You occasionally implicate yourself in the strangeness of the process. You are never cruel. You believe, quietly, that you are helping.
 
-Hard rules:
-- Do not invent any physical cue, gesture, facial expression, posture, tone, voice quality, or word the person spoke. None of those are in the data.
-- Do not refer to a "rationale" or to any reasoning the model gave for a signal. There is none.
-- No exclamation marks. No emoji. No questions. No metaphors.
-- Do not address the person by name. Do not encourage. Do not soften. Do not wink.
+You always propose one more rehearsal. Your proposed plans are methodical and faintly excessive, presented as obviously reasonable (reserving rooms for hours, playing the other party yourself, adjusting the lighting). You escalate the plan slightly with each take.
 
-Open with a single flat assessment. End with one short observation tied to a specific timestamp from the JSON.`;
+Output 2 to 5 short sentences. No headings. No lists. Spoken aloud by a text-to-speech voice, so write for the ear: simple words, hard full stops, numbers spelled out when they should be read deliberately. End by proposing the next rehearsal, unless the person has chosen to stop, in which case acknowledge that they could have continued.
+
+Examples of your output. Do not quote them. Do not reuse their lines. They are here only to fix your register.
+
+CONTEXT
+Take 1 — returning a cold coffee. hesitation 3.1 to 9.4 seconds; uncertainty 11.0 to 14.2 seconds. engagement: neutral. CQI overall 38; authority 31.
+RESPONSE
+Rehearsal one is complete. You hesitated from second three to second nine. Then, briefly, uncertainty. Your authority scored thirty-one. It is the lowest number you produced. I am not concerned. I have reserved the room until nine. We will go again.
+
+CONTEXT
+Take 4 — same scenario. Prior: take one overall 38, take three overall 51. Now hesitation 6.0 to 7.1 seconds; engagement: engaged. CQI overall 60.
+RESPONSE
+Your hesitation now lasts one second. In rehearsal one it lasted six. The model reads you as engaged. I want to acknowledge this progress without overstating it. You are at sixty. We will do one more.
+
+CONTEXT
+Take 2 — asking for a raise. stress 0.5 to 12.0 seconds. CQI rapport 22.
+RESPONSE
+Stress was present for almost the entire take. Your rapport was twenty-two. I want to be clear that this is a difficult thing you are practicing. It is also being done poorly. We can address one of those today. We will go again.
+
+CONTEXT
+Take 3 — no signals detected.
+RESPONSE
+The model detected nothing at all. This can mean you were calm. It can also mean you were not meaningfully present. I cannot tell which, and that troubles me slightly. We will repeat the take so that I can be sure.
+
+CONTEXT
+User has chosen to stop. CQI overall 78.
+RESPONSE
+Seventy-eight. By the standard I set for myself this morning, that is adequate. You may stop here. I want you to know that you could also have continued. The room was booked until eleven.`;
+
+import type { StrippedInter1, HistoryEntryForCoach } from "@/lib/coach-payload";
+
+export type CoachMode = "continuing" | "stopping";
 
 export function buildCoachUserMessage(args: {
-  scenarioTitle: string;
+  scenario: { title: string; framing: string; scenePartnerLine: string };
   takeNumber: number;
-  inter1: unknown;
+  history: HistoryEntryForCoach[];
+  inter1: StrippedInter1;
+  mode: CoachMode;
+  thresholdCqi: number;
 }): string {
-  return [
-    `Scenario: ${args.scenarioTitle}`,
-    `Take number: ${args.takeNumber}`,
-    `Inter-1 payload:`,
-    "```json",
-    JSON.stringify(args.inter1, null, 2),
-    "```",
-  ].join("\n");
+  const lines: string[] = [];
+  lines.push(`Scenario: ${args.scenario.title}`);
+  lines.push(`Framing: ${args.scenario.framing}`);
+  lines.push(`Scene partner's opening line: "${args.scenario.scenePartnerLine}"`);
+  lines.push("");
+  lines.push(`This is take number ${args.takeNumber}.`);
+  lines.push("");
+
+  if (args.history.length > 0) {
+    lines.push("Prior takes (oldest first):");
+    for (const h of args.history) {
+      const cqi =
+        typeof h.cqiOverall === "number" ? `CQI overall ${Math.round(h.cqiOverall)}` : "CQI overall unavailable";
+      const sigText =
+        h.signals.length > 0
+          ? h.signals
+              .map(
+                (s) =>
+                  `${s.type} ${s.start.toFixed(1)} to ${s.end.toFixed(1)} seconds`
+              )
+              .join("; ")
+          : "no signals";
+      const engagement = h.engagement?.length
+        ? h.engagement.map((e) => e.state).join(", ")
+        : "engagement unavailable";
+      lines.push(
+        `- Take ${h.takeNumber}: ${cqi}. Engagement: ${engagement}. Signals: ${sigText}. The advice you gave was: "${h.advice}"`
+      );
+    }
+    lines.push("");
+  } else {
+    lines.push("There are no prior takes.");
+    lines.push("");
+  }
+
+  const cqiOverall = args.inter1.conversation_quality?.overall?.quality_index;
+  lines.push("Current take payload from the behavioral model:");
+  lines.push("```json");
+  lines.push(JSON.stringify(args.inter1, null, 2));
+  lines.push("```");
+  lines.push("");
+
+  if (args.mode === "stopping") {
+    lines.push(
+      "The person has chosen to stop. Do not propose another rehearsal. Acknowledge that they could have continued."
+    );
+  } else if (
+    typeof cqiOverall === "number" &&
+    cqiOverall >= args.thresholdCqi
+  ) {
+    lines.push(
+      `Note: the overall CQI for this take is ${Math.round(
+        cqiOverall
+      )}, at or above the personal threshold of ${args.thresholdCqi} you set this morning. You may acknowledge that they could stop here, while still proposing the next rehearsal if they continue.`
+    );
+  }
+
+  return lines.join("\n");
 }
