@@ -73,6 +73,7 @@ export default function Recorder(props: {
   const chunksRef = useRef<Blob[]>([]);
   const startedAtRef = useRef<number>(0);
   const tickRef = useRef<number | null>(null);
+  const analyzeRef = useRef<((blob: Blob) => void) | null>(null);
 
   const ensureStream = useCallback(async (): Promise<MediaStream | null> => {
     if (streamRef.current) return streamRef.current;
@@ -160,7 +161,8 @@ export default function Recorder(props: {
     rec.onstop = () => {
       if (tickRef.current !== null) cancelAnimationFrame(tickRef.current);
       const blob = new Blob(chunksRef.current, { type: mimeType || "video/webm" });
-      void analyze(blob);
+      // Use latest analyze via ref so the closure isn't stale across takes.
+      analyzeRef.current?.(blob);
     };
     recorderRef.current = rec;
     rec.start(1000);
@@ -257,6 +259,11 @@ export default function Recorder(props: {
     },
     [takeNumber, scenario, takes, onTakeComplete]
   );
+
+  // Keep the ref pointed at the latest analyze so startRecording's closure is fresh.
+  useEffect(() => {
+    analyzeRef.current = analyze;
+  }, [analyze]);
 
   const nextTake = useCallback(() => {
     setReport(null);
