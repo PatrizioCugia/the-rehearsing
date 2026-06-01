@@ -47,7 +47,6 @@ describe("tryParseScenario", () => {
       FALLBACK_SCENARIO_API.framing;
     expect(merged).not.toMatch(/!/);
     // no emoji surrogate pairs
-    // eslint-disable-next-line no-misleading-character-class
     expect(merged).not.toMatch(/[\u{1F300}-\u{1FAFF}]/u);
   });
 });

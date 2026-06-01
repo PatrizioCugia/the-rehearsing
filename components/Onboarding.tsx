@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import type { Scenario } from "@/lib/scenario";
+import { PRESETS, type Preset } from "@/lib/presets";
 
 type Step = "location" | "description" | "composing";
 
@@ -9,6 +10,12 @@ type Msg = { from: "coach" | "user"; text: string };
 
 const Q1 = "Where does this rehearsal take place.";
 const Q2 = "Now describe yourself and what you are rehearsing. Be specific.";
+
+const SCENARIO_FALLBACK: Scenario = {
+  title: "An interaction the person has decided to prepare for.",
+  scenePartnerLine: "Have a seat.",
+  framing: "The details could not be composed. The rehearsal will proceed.",
+};
 
 export default function Onboarding(props: {
   onDone: (result: { scenario: Scenario; imageUrl: string | null }) => void;
@@ -39,6 +46,28 @@ export default function Onboarding(props: {
     imagePromiseRef.current = Promise.race([imageFetch, timeout]);
   }, []);
 
+  const cycleBeatsWhile = useCallback(
+    async <T,>(work: Promise<T>): Promise<T> => {
+      setComposingBeat("Composing the scene.");
+      const beats = [
+        "Composing the scene.",
+        "Constructing the set.",
+        "Reviewing the materials.",
+      ];
+      let i = 0;
+      const ticker = setInterval(() => {
+        i = (i + 1) % beats.length;
+        setComposingBeat(beats[i]);
+      }, 1200);
+      try {
+        return await work;
+      } finally {
+        clearInterval(ticker);
+      }
+    },
+    []
+  );
+
   const submitLocation = useCallback(() => {
     const text = draft.trim();
     if (!text) return;
@@ -46,7 +75,6 @@ export default function Onboarding(props: {
     setMessages((m) => [...m, { from: "user", text }, { from: "coach", text: Q2 }]);
     setDraft("");
     // Fire image generation now with the location, so it's in flight while the user types Q2.
-    // We pass a stub description; will not regenerate even when message 2 arrives.
     startImageGen(text, "rehearsal preparation");
     setStep("description");
   }, [draft, startImageGen]);
@@ -58,45 +86,39 @@ export default function Onboarding(props: {
     setDraft("");
     setStep("composing");
 
-    setComposingBeat("Composing the scene.");
-
-    const scenarioFallback: Scenario = {
-      title: "An interaction the person has decided to prepare for.",
-      scenePartnerLine: "Have a seat.",
-      framing: "The details could not be composed. The rehearsal will proceed.",
-    };
     const scenarioFetch = fetch("/api/scenario", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ location: locationRef.current, description: text }),
     })
       .then(async (r) => (await r.json()) as Scenario)
-      .catch((): Scenario => scenarioFallback);
-    // Demo safety: bound the scenario wait too.
+      .catch((): Scenario => SCENARIO_FALLBACK);
     const scenarioTimeout = new Promise<Scenario>((resolve) =>
-      setTimeout(() => resolve(scenarioFallback), 30_000)
+      setTimeout(() => resolve(SCENARIO_FALLBACK), 30_000)
     );
     const scenarioPromise = Promise.race([scenarioFetch, scenarioTimeout]);
 
-    // Cycle the beat while we wait, so the wait feels intentional.
-    const beats = [
-      "Composing the scene.",
-      "Constructing the set.",
-      "Reviewing the materials.",
-    ];
-    let i = 0;
-    const ticker = setInterval(() => {
-      i = (i + 1) % beats.length;
-      setComposingBeat(beats[i]);
-    }, 1200);
-
-    const [scenario, imageUrl] = await Promise.all([
-      scenarioPromise,
-      imagePromiseRef.current ?? Promise.resolve<string | null>(null),
-    ]);
-    clearInterval(ticker);
+    const result = await cycleBeatsWhile(
+      Promise.all([
+        scenarioPromise,
+        imagePromiseRef.current ?? Promise.resolve<string | null>(null),
+      ])
+    );
+    const [scenario, imageUrl] = result;
     props.onDone({ scenario, imageUrl });
-  }, [draft, props]);
+  }, [draft, props, cycleBeatsWhile]);
+
+  const selectPreset = useCallback(
+    async (preset: Preset) => {
+      setStep("composing");
+      startImageGen(preset.location, preset.description);
+      const result = await cycleBeatsWhile(
+        imagePromiseRef.current ?? Promise.resolve<string | null>(null)
+      );
+      props.onDone({ scenario: preset.scenario, imageUrl: result });
+    },
+    [startImageGen, cycleBeatsWhile, props]
+  );
 
   const onSubmit = step === "location" ? submitLocation : submitDescription;
 
@@ -106,9 +128,7 @@ export default function Onboarding(props: {
         <p className="text-xs uppercase tracking-[0.3em] text-neutral-500">
           Rehearsal — Intake
         </p>
-        <h1 className="text-2xl font-semibold mt-1">
-          Before we begin.
-        </h1>
+        <h1 className="text-2xl font-semibold mt-1">Before we begin.</h1>
       </header>
 
       <div className="flex-1 flex flex-col gap-3 overflow-y-auto">
@@ -131,6 +151,25 @@ export default function Onboarding(props: {
         )}
       </div>
 
+      {step === "location" && (
+        <div className="space-y-2">
+          <p className="text-[11px] uppercase tracking-widest text-neutral-500">
+            Or select one of the prepared rehearsals.
+          </p>
+          <div className="flex flex-col gap-2">
+            {PRESETS.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => selectPreset(p)}
+                className="text-left px-4 py-3 rounded-lg border border-neutral-800 bg-neutral-950 text-neutral-200 hover:bg-neutral-900 hover:border-neutral-700 text-sm"
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {step !== "composing" && (
         <form
           onSubmit={(e) => {
@@ -143,7 +182,7 @@ export default function Onboarding(props: {
             autoFocus
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            placeholder={step === "location" ? "Type your answer." : "Type your answer."}
+            placeholder="Type your answer."
             className="flex-1 bg-neutral-950 border border-neutral-800 rounded-lg px-4 py-3 text-neutral-100 placeholder-neutral-600 focus:outline-none focus:border-neutral-600"
           />
           <button
