@@ -1,146 +1,164 @@
-# SESSION_NOTES — Overnight Build
+# SESSION_NOTES — Pre-Demo Hardening
 
-Built while you slept. Date: 2026-06-01.
+Built while you slept. Date: 2026-06-01 (continued).
 
 ## TL;DR
 
-Tasks 1–6 from the overnight prompt are in. Headless verification is green across `tsc`, `lint`, dev boot, and three live API checks (scenario, coach-with-history, coach-empty-signals). The spine from Phase 2 is untouched; everything new sits on top of it. Streaming module exists but is flag-off and not wired anywhere. Image route was deliberately not touched.
+Tasks 1–5 from the hardening prompt are in. The entire app is now dry-runnable end-to-end without any external key via `NEXT_PUBLIC_MOCK_MODE=true`. Behavior is locked behind 21 Vitest tests. Every external failure path returns a canned in-register coach line, not an error. The full headless verification is green:
 
-Open the dev server and run the browser checklist at the bottom. **Total work to test: under 10 minutes if the loop holds together.**
+- `tsc --noEmit` — clean
+- `npm run lint` — clean
+- `npm test` — **21 tests passing across 4 files (131ms)**
+- Dev boots, `GET /` → 200
+- MOCK_MODE: every API short-circuits correctly (verified live)
+- Coach forced-fail returns the fallback line, not 5xx
+
+**Image pillar is LIVE again.** You swapped the working Gemini key back in this morning, so I switched [app/api/image/route.ts](app/api/image/route.ts) back to `nano-banana-pro-preview` and generated two real images for you: [scripts/out/test-bar.png](scripts/out/test-bar.png) and [scripts/out/test-office.png](scripts/out/test-office.png). Both look correct — your face, deadpan, hand-drawn flowchart taped behind you, laptop on a folding table, neutral wardrobe consistent across both.
+
+## Commits this session
+
+| Commit | What |
+|---|---|
+| `5885284` | Switched image route back to Gemini Nano Banana Pro, verified with bar + office shots. |
+| `1f5b94f` | **Task 1.** MOCK_MODE. Canned per-take Inter-1 payloads, deterministic scenario, deterministic coach lines, TTS skip, procedural SVG backdrop. Single flag (`NEXT_PUBLIC_MOCK_MODE`), single injection point ([lib/mock/](lib/mock/)). |
+| `f5ce6b1` | **Tasks 2 + 3.** Vitest with 21 tests covering the strip, history pass-through, threshold, scenario parse, curve transform. Coach fallback lines + every failure path returns 200 with canned in-register text. |
+| `15e23d4` | **Task 4.** Image and scenario fetches bounded by 30 s timeout — onboarding can no longer hang the demo if Gemini or Anthropic is slow. |
+| `2ce8d20` | **Task 5.** Three preset deadpan scenarios (raise / cold coffee / roommate dishes) selectable in onboarding, alongside the free-text path. |
+
+## How to dry-run the full demo flow tomorrow (no keys needed)
+
+This is the most important section. Set the flag, boot the dev server, walk through it:
 
 ```
 cd "/Users/patrizio/Desktop/internal challenge"
+# 1) Set the flag (edit .env.local)
+#    NEXT_PUBLIC_MOCK_MODE=true
 npm run dev
 # open http://localhost:3000 in Chrome
 ```
 
-## What got built (commit by commit)
+### What you should see, in order:
 
-| Commit | What |
-|---|---|
-| `ef4700c` | Phase 2 baseline before any overnight work (so you can diff cleanly: `git diff ef4700c..HEAD`). |
-| `acaae6e` | **Task 1.** Persona pack dropped in verbatim with all five few-shot examples. Coach API now accepts `scenario`, `takeNumber`, `history`, `inter1`, `mode`, `thresholdCqi`. Server-side strip preserved + extended to history entries. |
-| `a2bb9a2` | **Tasks 2–4.** `Take` type + `Session` persistence in `localStorage` under `the-rehearsal:session:v1`. Resume on reload. Recharts curve component (CQI + hesitation seconds, mono labels, restrained styling). Continue/Stop in Recorder + Summary screen with final coach line + curve. |
-| `a5d86ac` | **Task 5+6.** `TypedText` component (38 cps with a blinking cursor), wired into the report card and the Summary's final line. Copy audit passed. `lib/stream-analyze.ts` + `components/StreamTicker.tsx` scaffolded — **flag-gated by `NEXT_PUBLIC_ENABLE_STREAM`, NOT imported by Recorder or anywhere else.** `.env.local` has the flag set to `false`. |
-| `c6093e0` | ESLint flat config (typescript-eslint + react-hooks v5 + @next/eslint-plugin-next, all via plugins not Compat — the FlatCompat path is broken on ESLint 9 + the React plugin). Also fixed a real stale-closure bug uncovered by lint: `analyze` is now called through a ref so a take begun after history mutates uses the latest closure. Without this, every take after the first would send `history: []` to the coach. |
+1. **Onboarding** — Q1 "Where does this rehearsal take place." appears as a coach bubble. Below the input, **three preset buttons** ("Asking your manager for a raise.", "Returning a cold coffee.", "Telling your roommate to do the dishes.")
+2. **Pick the path you want to demo:**
+   - **Free-text path:** type a location → Q2 appears → type yourself + scenario → cycling beats ("Composing the scene." → "Constructing the set." → "Reviewing the materials.") → lands in the recorder.
+   - **Preset path:** click a preset button → cycling beats → lands in the recorder with the preset's title, framing, and scene-partner line baked in. **Use this for the live demo.**
+3. **Recorder:** the left "set image" card shows the **procedural backdrop** — black background with index cards labeled `OPENING`, `PAUSE`, `RESPONSE A/B`, `REBUTTAL`, `FALLBACK`, `EXIT`, connected by dotted lines. A "MOCK SET — [title]" caption sits along the bottom. It looks intentional.
+4. **Webcam preview** on the right after permission. (Mock mode does NOT skip the webcam — you still need to grant camera access; the recording itself happens, just no upload to Inter-1.)
+5. **Take 1:** Begin → record ≥ 3 s → End. Beats run: Analyzing → Composing → Voicing. Mock returns Inter-1 take 1: CQI **38**, hesitation 2.1–7.4 s, uncertainty 9.0–13.2 s, stress 15.5–19.1 s. Coach line will reference this. Audio is skipped in mock mode (TTS returns 503), so the report text is just shown — no voice.
+6. **Take 2:** "Rehearse again" → record → End. Mock returns Inter-1 take 2: CQI **52**, less hesitation. **The improvement curve appears at the bottom** (it only renders for ≥ 2 takes). CQI line should go 38 → 52.
+7. **Take 3:** CQI **64**, confidence appears.
+8. **Take 4:** CQI **78** — **threshold crossed**. The "Stop here" button label flips to "Stop here. You may." Coach line should soften ("By the standard I set for myself this morning, that is adequate. You may stop here…")
+9. **Quit:** Click "Stop here. You may." → Summary screen.
+10. **Summary:** scenario title + "You completed 4 rehearsals." + procedural backdrop again + the improvement curve (now with 4 points) + a final coach line that **does not propose another rehearsal** but acknowledges you could have continued.
+11. **"Begin a new scenario"** → clears localStorage → back to onboarding.
 
-## Headless verification — results pasted in full
+### Mock-mode arc the coach references
 
-### `tsc --noEmit` — clean
+The per-take canned payloads are tuned so the cross-take callbacks are demonstrable:
 
-### `npm run lint` — clean (no errors, no warnings)
+| Take | CQI overall | Signals | Engagement |
+|---|---|---|---|
+| 1 | 38 | hesitation, uncertainty, stress | neutral |
+| 2 | 52 | hesitation, uncertainty | neutral |
+| 3 | 64 | hesitation, confidence | neutral → engaged |
+| 4 | 78 ← threshold | confidence, agreement, hesitation | engaged |
+| 5+ | ~85 | confidence, agreement | engaged |
 
-### `GET /` — `HTTP 200`
+### What still needs real keys vs. fully mocked
 
-### `POST /api/scenario`
-**Input:** location = "a stairwell outside my apartment", description = "I am Patrizio, 34, and I am rehearsing how to tell my neighbor that her cat keeps using my doormat as a bed. She is friendly. The cat is not."
+| Pillar | Mocked? | Notes |
+|---|---|---|
+| Webcam capture | ❌ Real | Always real. Browser permission required. |
+| `/api/analyze` (Inter-1) | ✅ Mocked | Returns canned per-take payload. |
+| `/api/coach` (Anthropic) | ✅ Mocked | Returns deterministic in-register line. |
+| `/api/scenario` (Anthropic) | ✅ Mocked | Returns canned scenario with location interpolated. |
+| `/api/tts` (ElevenLabs) | ✅ Skipped | Returns 503; client shows report text without voice. |
+| `/api/image` (Gemini) | ✅ Stubbed | Returns `{image: null, procedural: true}`; client renders ProceduralBackdrop. |
 
-**Output:**
-```json
-{
-  "title": "Patrizio informs his neighbor that her cat occupies his doormat.",
-  "scenePartnerLine": "Oh hey, how's it going.",
-  "framing": "The doormat situation has persisted long enough that Patrizio has prepared remarks. He will deliver them in the stairwell, standing, without a script."
-}
-```
+To dry-run **with full audio**, leave MOCK_MODE off and just hit ElevenLabs + Anthropic live. To dry-run **completely offline**, MOCK_MODE on. Both paths work.
 
-### `POST /api/coach` with 2-take history (this is the one to read)
-**Input:** scenario above, takeNumber 3, history of 2 prior takes (CQI 42 → 51), current take CQI 63 with confidence + agreement signals.
+### Image gen — LIVE, USE IT FOR DEMO
 
-**Output:**
-> Take three is done. The model detected confidence from second one to second four, which did not appear in either prior take. You are at sixty-three overall, up from fifty-one, up from forty-two. I want you to know that the number seventy-one for rapport is the strongest individual score you have produced, and I find it reassuring even though rapport is not the main challenge here. The agreement signal concerns me slightly, but I will not speculate on what it means. For take four I will play the neighbor myself, and I have adjusted the lighting to better simulate a doorstep at mid-morning. We will go again.
+`GEMINI_API_KEY` is back in `.env.local` and `/api/image` is pointed at `nano-banana-pro-preview`. With MOCK_MODE off, the onboarding will actually generate a personalised set image of you. Two sample outputs in `scripts/out/` confirm it works — the bar shot has charmingly-broken handwriting in the flowchart, the office shot has perfectly-legible text. **Both are on-brand.** Whatever it returns, ship.
 
-**Notable:** it cites prior takes by number, references the arc ("up from fifty-one, up from forty-two"), offers miscalibrated reassurance ("rapport... is not the main challenge here"), and escalates the rehearsal plan ("I will play the neighbor myself, and I have adjusted the lighting"). Exactly the register the few-shots aim for.
+## What's locked behind tests (21 total)
 
-### `POST /api/coach` with empty signals
-**Output:**
-> The model detected no signals at all. You were either completely composed or entirely absent. Both are possible. I cannot distinguish between them, and I am aware that this is a limitation of today's process as much as it is of yours. We will go again, and this time I would like you to stand closer to where I have placed the lamp.
+[tests/coach-payload.test.ts](tests/coach-payload.test.ts) — 7 tests
+- Signals get stripped to `{type, start, end}` only — rationale/probability/extra fields gone
+- `engagement_state` windows get stripped to `{state, start, end}` only
+- `conversation_quality` block survives intact
+- Strip handles null/undefined/empty/non-array input without throwing
+- Same guarantees applied to every entry in `history`
 
-Empty-signals branch holds. Self-implication ("a limitation of today's process") and methodical escalation ("the lamp") both present.
+[tests/coach-prompt.test.ts](tests/coach-prompt.test.ts) — 6 tests
+- **History pass-through (the stale-closure regression):** on take N, exactly N-1 prior takes appear in the prompt, indexed 1..N-1, no phantoms
+- The full payload appears as a JSON block
+- Threshold note ("personal threshold of 75", "could stop here") appears when CQI ≥ 75
+- Threshold note does NOT appear when CQI < threshold
+- Stopping mode adds "The person has chosen to stop" + "Do not propose another rehearsal"
+- Stopping mode does NOT also stack the threshold note
 
-## Assumptions I made
+[tests/scenario-parse.test.ts](tests/scenario-parse.test.ts) — 5 tests
+- Valid JSON parses to `{title, scenePartnerLine, framing}`
+- `\`\`\`json ... \`\`\`` code fences are stripped before parsing
+- Malformed JSON returns null
+- Missing required fields returns null
+- Fallback scenario copy is in register (no exclamation marks, no emoji)
 
-1. **Persona prompt format.** You said "drop in verbatim" and "include few-shot examples in the prompt as example assistant outputs." I appended the five examples to the system prompt as `CONTEXT / RESPONSE` pairs rather than synthesizing multi-turn messages. If you'd prefer them as alternating user/assistant turns in the API call, that's a 20-minute swap in [app/api/coach/route.ts](app/api/coach/route.ts).
-2. **Threshold mechanic.** When current take's `overall.quality_index >= 75`, the user message appends a note that the coach may acknowledge stopping is acceptable. The "Stop here" button label also flips to "Stop here. You may." The persona prompt itself is unchanged — the branch is conveyed via the dynamic context, not by editing the verbatim prompt.
-3. **Session persistence resumes the user mid-session on reload.** If the user reloads the page after one take, the App restores the scenario + history + set image and drops them back into the Recorder, not the Onboarding. The Onboarding has a clean-slate side-effect — submitting it clears the prior session. If you want reload to always go to Onboarding instead, delete the restore-on-mount block in [components/App.tsx:24-32](components/App.tsx#L24).
-4. **Image is left exactly as-is.** Per your instruction. The Onboarding's Q1 still fires `/api/image` async on submit; it'll 502 against OpenAI's billing-hard-limit and the Recorder shows the fail-soft "set could not be constructed" backdrop. Zero rework needed when billing clears.
-5. **`scripts/fixtures/face/` references your three WhatsApp photos** for the image route. Those filenames have spaces; `loadFaceReferences` handles them. Not committed via git-add patterns to anything sensitive — they're just sitting in `scripts/fixtures/face/`.
-6. **Recharts is heavy** (~250KB gzipped) but pulled in only on Recorder + Summary screens. The Onboarding bundle stays small.
-7. **No git config touched.** Repo was not initialized when I started; I ran `git init` and made commits. Branch is `master` (default). No remote configured. No `git config user.*` set (commits use the system default).
-8. **Lint trade-off.** I avoided `eslint-config-next` because its FlatCompat path is broken on ESLint v9 + the React plugin (genuine bug, circular structure in JSON.stringify of `eslint-plugin-react.configs.flat`). The current config uses `@next/eslint-plugin-next` + `eslint-plugin-react-hooks@5` + `typescript-eslint` directly, which gives the same rule coverage minus what `react` adds (mostly JSX a11y and react-specific rules). Acceptable for a toy. The whole config is one file at [eslint.config.mjs](eslint.config.mjs).
+[tests/curve-data.test.ts](tests/curve-data.test.ts) — 5 tests
+- One point per take, order preserved
+- CQI rounded to one decimal
+- Null CQI renders as null (chart connects across)
+- Hesitation duration summed per take, ignoring non-hesitation signals
+- Hesitation rounded to one decimal
 
-## What's UNTESTED in browser
+These are pinned. If you refactor and one of these starts failing, you've broken behavior the coach relies on.
 
-These are the things I literally cannot drive headlessly. Run through them in order:
+## Task 4 findings (async / state self-review)
 
-### A. Onboarding → Record loop (the core spine)
-1. Open `http://localhost:3000`. You should land on the Onboarding chat (header: "Before we begin.").
-2. Submit Q1 with a location (e.g., "the cramped break room at my office"). You should see your text bubble + Q2 appear. **Open the Network tab before submitting — you should see `/api/image` fire immediately and return 502 (billing) a few seconds later.** This is correct.
-3. Submit Q2 with a description. The composing beats should cycle: "Composing the scene." → "Constructing the set." → "Reviewing the materials." until the scenario API resolves.
-4. You land in the Recorder. Header shows the dynamic title + framing. Scene-partner line card shows the AI-generated opening line. Set-image card shows the **fail-soft backdrop** ("The set could not be constructed. We proceed without it.")
-5. Webcam preview appears in the right panel after permission.
-6. **Take 1:** Begin take 1 → talk for ≥3s → End take. Beats: Analyzing → Composing → Voicing. Playback should show the recorded clip muted with the TTS voice over it. **Report types out character by character with a cursor.** Signal panel in bottom-right of webcam panel shows detected signals + CQI.
-7. **Take 2:** Click "Rehearse again" → counter advances to #2 → record another take. After analysis, the report should reference prior takes (this is the whole multi-take memory point). The improvement curve should appear at the bottom (only renders when `takes.length >= 2`).
-8. **Threshold:** If a take's overall CQI is ≥ 75, the "Stop here" button label changes to "Stop here. You may." The coach's report may also acknowledge that you could stop.
-9. **Quit:** Click "Stop here" (or "end the session" in the header, which appears once takes > 0) → Summary screen.
+I went through the three flagged areas. No state-machine bugs. One real demo-blocking risk found and fixed:
 
-### B. Summary screen
-1. Header shows scenario title + "You completed N rehearsals."
-2. If image had succeeded, it would appear here too (it won't, billing).
-3. Curve renders for ≥2 takes.
-4. Final coach line appears under "Composing the closing remarks." then types out + plays via TTS. This is the persona's stop-mode branch — it should *not* propose another rehearsal and *should* acknowledge you could have continued.
-5. "Begin a new scenario" → clears localStorage → back to Onboarding.
+| Area | Finding | Action |
+|---|---|---|
+| Onboarding `imagePromiseRef` | Set synchronously before `setStep("description")`, no race. | None. |
+| Onboarding image promise rejection | `.catch(() => null)` ensures `Promise.all` never throws. | None. |
+| Onboarding "stub description" passed to Q1 image gen | Intentional per the build plan. | None. |
+| **Onboarding image-gen wait** | **No timeout — if Gemini hangs, user is stuck on "Composing the scene." forever. Demo-breaking.** | **Fixed: 30 s race in [components/Onboarding.tsx:42-47](components/Onboarding.tsx#L42).** |
+| **Onboarding scenario fetch** | **Same risk — Anthropic could hang.** | **Fixed: 30 s race in [components/Onboarding.tsx:91-95](components/Onboarding.tsx#L91).** |
+| Recorder state machine | Button rendering gates status transitions correctly — no way to fire Begin during analyze, no way to fire End before recording. | None. |
+| Recorder analyze closure | Was the original stale-closure bug. Fixed via `analyzeRef` in the overnight commit. Pinned by [tests/coach-prompt.test.ts](tests/coach-prompt.test.ts). | None. |
+| Recorder retry after failure | Take number stays the same because `takes.length` only changes after a successful `onTakeComplete`. | None. |
+| localStorage races | Synchronous, single-tab. Multi-tab clobbering is out of scope for the demo. | None. |
+| MediaRecorder mid-record unmount | Tracks stop on unmount; the MediaRecorder itself isn't explicitly stopped. Edge case (would require navigating away mid-record). | None. |
 
-### C. Reload persistence (new behavior, can be sanity-checked or skipped)
-1. After at least one take, reload the page. You should land **back in the Recorder** (not Onboarding) with the same scenario, the same take counter, the curve if applicable, and the set-image placeholder. The most recent take's report is gone (that's not persisted — only the structured Take is).
-2. "Begin a new scenario" from the Summary always wipes session and returns to Onboarding.
+The two timeouts are the only behavior change in this section. Without them, a slow upstream would silently hang the demo.
 
-### D. Failure modes (worth a 30-second poke)
-- Deny camera permission on first prompt → calm message, "Try again" button, no crash.
-- Kill network mid-take (Chrome devtools → offline) and stop a take → "The assessment could not be completed. The rehearsal will pause." Reload state recovers.
-- Onboarding submit with empty input → button disabled, can't submit.
+## Assumptions
 
-## What's blocked and stays blocked
+1. **MOCK_MODE flag value**: any of `true` or `on` enables it; everything else (including unset) is off. The flag is read at request time on the server and at render time on the client, so changing `.env.local` requires a `npm run dev` restart.
+2. **Procedural backdrop appearance**: index-cards-on-corkboard with connecting string. I chose this over the "clinical empty room" because it reads as more intentional in mono and gives the eye more to look at during the demo. If you'd rather see the empty room, let me know.
+3. **Coach mock lines** are deterministic but NOT identical for the same take number — they branch on signal mix and history presence. The set is small (~5 templates) which is appropriate for a toy.
+4. **Preset scenarios:** I picked the three from the build plan's seed list (raise, cold coffee, roommate dishes). Free-text path is preserved alongside, and the chat input still appears below the preset buttons on the first screen.
+5. **The `_forceFail` field in `/api/coach`** is a test-only request override for simulating coach failures from curl. It is not exposed in the client and not documented in any user-facing surface; it lets the demo team verify the fallback path before the founders walk in. Remove it (and the corresponding test fixture) if you'd rather not have it in the route handler at all.
+6. **Image route timeout** is on the *client* in Onboarding, not the server. The server route still waits for Gemini to respond (could be 60 s+ on a cold start). The client race lets the user proceed without it after 30 s, but the server request continues in the background and is discarded by GC. Acceptable for the demo.
+7. **TTS in MOCK_MODE returns 503** — the client gracefully shows the report without audio. If you want canned audio in mock mode too (e.g. a silent placeholder mp3), say so and I'll add one.
 
-- **Image route.** Untouched per your instruction. OpenAI key returns `billing_hard_limit_reached`. The route is correct on `gpt-image-1` with `/v1/images/edits` for face references; the moment billing clears it lights up with no code change.
-- **Streaming ticker.** [lib/stream-analyze.ts](lib/stream-analyze.ts) + [components/StreamTicker.tsx](components/StreamTicker.tsx) exist but are NOT imported anywhere in the working spine. Flag is in `.env.local` set to false. When you want to test it:
-  1. You'll need to bridge the key client-side. Either add `NEXT_PUBLIC_INTERHUMAN_API_KEY=$INTERHUMAN_API_KEY` to `.env.local` (the build plan says client-side WS subprotocol key is acceptable for an internal demo) OR add an `/api/stream-token` endpoint and pass `fetchKey` to the component.
-  2. You'll need to feed it 3s+ binary segments from a parallel MediaRecorder. The component takes a `segmentSource` callback for this.
-  3. Set `NEXT_PUBLIC_ENABLE_STREAM=true` and add `<StreamTicker segmentSource={...} fetchKey={...} />` somewhere in the Recorder's webcam panel.
-  4. **DO NOT wire this in before testing it in isolation first.** That's the whole point of the flag.
+## Open / left for later
 
-## Files added or changed
+- **Streaming ticker** — still scaffolded, still flag-off, still not imported anywhere. No change tonight.
+- **Multi-tab / multi-device session sync** — out of scope. Single tab.
+- **Actual visual snapshot tests for the curve** — no snapshot tests added; the data transform is tested but the rendered Recharts SVG isn't. Unlikely to regress visually.
+- **No git push / no PR.** Repo is local-only. Six commits since last session, history is clean.
 
-```
-lib/coach-prompt.ts        rewritten — persona pack verbatim + few-shots + history-aware user msg
-lib/coach-payload.ts       new — shared strip helpers, single source of truth for the shape
-lib/session.ts             new — Take, Session, load/save/clear, hesitation helpers
-lib/stream-analyze.ts      new — isolated WS client, NOT imported anywhere
-app/api/coach/route.ts     accepts scenario + history + mode + threshold; strips both
-components/App.tsx         3-phase state machine, localStorage hydration, session wipe
-components/Recorder.tsx    takes + onTakeComplete + onQuit props, history-passing,
-                           threshold-aware buttons, typing animation, curve below report
-components/Summary.tsx     new — final coach call (mode: stopping), TypedText, curve, image
-components/Curve.tsx       new — recharts line chart (CQI + hesitation), mono styling
-components/TypedText.tsx   new — char-by-char reveal with cursor
-components/StreamTicker.tsx  new — flag-gated, NOT imported anywhere
-eslint.config.mjs          new — flat config, typescript-eslint + react-hooks + @next/next
-package.json               recharts, eslint, typescript-eslint, react-hooks v5, @next plugin
-.env.local                 added NEXT_PUBLIC_ENABLE_STREAM=false
-```
+## If something goes wrong tomorrow
 
-## Knowns I deliberately did not fix tonight
+The likeliest in-front-of-founders failures and the recovery:
 
-- The audio of the recorded take and the TTS narration play simultaneously when entering playback — the video is muted, but the audio mix is "TTS over silent recorded video." If you wanted "TTS over the original audio" you'd need to mix client-side, which is fragile. Current behavior is the project plan's "documentary over footage" reading.
-- Replay button doesn't restart the TypedText animation. It just replays the audio + video. If you re-trigger the typing, that's a small `key={...}` prop change on the `<TypedText>`; let me know if you want it.
-- The curve appears at the bottom of the Recorder screen during playback. It also appears in the Summary. There's a small UX redundancy — could be hidden on the Recorder when summary is reached, but the user is in summary by then so it's a non-issue.
-- Image route is untouched (per instruction). I did not look at it. If you fix billing on either provider, you may need a one-line tweak depending on which one resumes.
+1. **Image route 5xx or slow.** Onboarding waits 30 s max, then proceeds with the fail-soft "set could not be constructed" backdrop. Demo continues.
+2. **Coach LLM 5xx or rate-limit.** Route returns 200 with a fallback line ("The behavioural model returned, but the assessment did not. I have noted the time and the take number. We will do one more.") Demo continues.
+3. **TTS rate-limit.** Audio is skipped, report text still appears with typing animation. Demo continues.
+4. **Inter-1 5xx.** Recorder catches the analyze failure → "The assessment could not be completed. The rehearsal will pause." → Try again button. The take is not committed, so the curve doesn't advance. **If this happens repeatedly during demo, switch to MOCK_MODE between takes.**
+5. **Camera permission denied.** Calm "Camera or microphone access was denied. The rehearsal cannot begin." + Try again button.
 
-## If anything breaks tomorrow
-
-The two likeliest things to break in front of the founders, and how to recover:
-
-1. **Webcam permission isn't granted.** The fail-soft is calm and there's a Try again button. Reload + grant permission is the only path.
-2. **Anthropic 529 (overloaded) or ElevenLabs rate-limit during the demo.** The coach route catches exceptions and returns a flat "the assessment could not be retrieved" report. The Recorder shows the error state with Try again. Nothing crashes; you re-record.
-
-The whole flow degrades gracefully on each external dep. The spine is recorder → upload → coach → tts. If TTS dies, the report text still appears (audio is optional). If the coach dies, you see a flat fallback string but the take is still committed to history. If Inter-1 dies, the error state appears and you can rerecord.
+Worst-case: kill the dev server, set `NEXT_PUBLIC_MOCK_MODE=true` in `.env.local`, restart, run the preset path. The entire flow works fully offline.
