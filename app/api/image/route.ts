@@ -39,20 +39,14 @@ async function loadFaceReferences(): Promise<
 }
 
 function buildPrompt(location: string, description: string): string {
+  // Composition is front-loaded so it survives the long-prompt weight decay.
+  // Laptop failure mode (laptop-on-table, backpack, chest harness) is fought
+  // with explicit negatives, capitalised for emphasis.
   return (
-    `Photorealistic still of the person shown in the reference photographs, alone, ` +
-    `standing in a small private space they have set up to rehearse one specific upcoming interaction. ` +
-    `Location of the rehearsal space: ${location}. ` +
-    `Context of the upcoming interaction: ${description}. ` +
-    `On a wall behind them: a hand-drawn flowchart on butcher paper, taped up crookedly, ` +
-    `with boxes and arrows describing the interaction. ` +
-    `An open laptop on a folding table beside them, papers, a printed script. ` +
-    `Wardrobe: a plain neutral outfit, inconspicuous, slightly off. ` +
-    `Lighting: practical overhead, documentary realism, no glamour. ` +
-    `The person is facing the camera, deadpan, mid-thought, not smiling. ` +
-    `Frame: medium-wide, eye-level. ` +
-    `Match the face in the reference photographs closely. ` +
-    `Only one person in frame. No text overlays, no captions.`
+    `A wide establishing shot of ${location}. The same man as in the reference photograph stands in the FAR LEFT THIRD of the frame, SMALL within the wider view, seen full-length — an observer at the edge of the frame, not the subject of the photo. His body is turned three-quarter away. He glances back over his shoulder toward the camera with a mild, blank, slightly caught-off-guard expression, soft and a little awkward.\n\n` +
+    `An open laptop hangs at waist height from a single black strap worn diagonally across his body, over one shoulder and down to the opposite hip — sash-style, like a courier-bag sling. He steadies the laptop lightly with one hand. The laptop is NOT resting on any table, desk, bench, or surface. NO backpack, NO chest harness, NO two-strap rig. The strap is visible only over one shoulder. He wears a plain grey t-shirt and dark trousers.\n\n` +
+    `A large sheet of brown kraft paper is taped up on a wall or surface near him, covered in a hand-drawn flowchart of boxes and arrows, the handwriting loose and not clearly legible. A folding table holds a few scattered printed pages.\n\n` +
+    `Soft, ordinary lighting suited to the environment. Deadpan, quiet, gently absurd mood. Context of the upcoming interaction being rehearsed: ${description}. Candid, naturalistic, documentary-style photograph, 35mm, natural depth of field, as if a still from an observational TV show. Lots of open space and air around the scene. Match the face in the reference photographs closely. Only one person in frame. No text overlays, no captions.`
   );
 }
 
@@ -72,7 +66,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let body: { location?: string; description?: string };
+  let body: { location?: string; description?: string; prompt?: string };
   try {
     body = await req.json();
   } catch {
@@ -81,8 +75,19 @@ export async function POST(req: NextRequest) {
 
   const location = (body.location ?? "").trim();
   const description = (body.description ?? "").trim();
-  if (!location) {
-    return NextResponse.json({ error: "missing_location" }, { status: 400 });
+  const overridePrompt = (body.prompt ?? "").trim();
+
+  // If a full prompt override is supplied (used by presets that ship their
+  // own scene-specific text), use it verbatim. Otherwise build from
+  // location + description for the free-text path.
+  let prompt: string;
+  if (overridePrompt) {
+    prompt = overridePrompt;
+  } else {
+    if (!location) {
+      return NextResponse.json({ error: "missing_location" }, { status: 400 });
+    }
+    prompt = buildPrompt(location, description);
   }
 
   try {
@@ -98,7 +103,7 @@ export async function POST(req: NextRequest) {
         contents: [
           {
             role: "user",
-            parts: [{ text: buildPrompt(location, description) }, ...refs],
+            parts: [{ text: prompt }, ...refs],
           },
         ],
       }),
