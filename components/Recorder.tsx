@@ -8,6 +8,7 @@ import {
 } from "@/lib/coach-payload";
 import { THRESHOLD_CQI, type Take } from "@/lib/session";
 import { isMockMode } from "@/lib/mock";
+import { fetchWithTimeout } from "@/lib/fetch-timeout";
 import Curve from "./Curve";
 import TypedText from "./TypedText";
 import ProceduralBackdrop from "./ProceduralBackdrop";
@@ -188,7 +189,11 @@ export default function Recorder(props: {
         const ext = blob.type.includes("mp4") ? "mp4" : "webm";
         form.append("file", blob, `take-${takeNumber}.${ext}`);
         form.append("takeNumber", String(takeNumber));
-        const r1 = await fetch("/api/analyze", { method: "POST", body: form });
+        const r1 = await fetchWithTimeout(
+          "/api/analyze",
+          { method: "POST", body: form },
+          60_000
+        );
         if (!r1.ok) throw new Error(`analyze failed: ${r1.status}`);
         const inter1Raw = await r1.json();
         const stripped = stripInter1Payload(inter1Raw);
@@ -204,33 +209,45 @@ export default function Recorder(props: {
         }));
 
         setStatus("composing");
-        const r2 = await fetch("/api/coach", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            scenario,
-            takeNumber,
-            history: historyForCoach,
-            inter1: stripped,
-            mode: "continuing",
-            thresholdCqi: THRESHOLD_CQI,
-          }),
-        });
+        const r2 = await fetchWithTimeout(
+          "/api/coach",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              scenario,
+              takeNumber,
+              history: historyForCoach,
+              inter1: stripped,
+              mode: "continuing",
+              thresholdCqi: THRESHOLD_CQI,
+            }),
+          },
+          30_000
+        );
         if (!r2.ok) throw new Error(`coach failed: ${r2.status}`);
         const { report: reportText } = (await r2.json()) as { report: string };
 
+        // TTS is optional — isolate its failure so a timeout or network drop
+        // does NOT lose the report we already have in hand.
         setStatus("voicing");
-        const r3 = await fetch("/api/tts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: reportText }),
-        });
-
-        // Audio is optional — degrade gracefully if TTS fails.
         let nextAudioUrl: string | null = null;
-        if (r3.ok) {
-          const audioBlob = await r3.blob();
-          nextAudioUrl = URL.createObjectURL(audioBlob);
+        try {
+          const r3 = await fetchWithTimeout(
+            "/api/tts",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ text: reportText }),
+            },
+            20_000
+          );
+          if (r3.ok) {
+            const audioBlob = await r3.blob();
+            nextAudioUrl = URL.createObjectURL(audioBlob);
+          }
+        } catch (ttsErr) {
+          console.warn("[tts] skipped:", ttsErr);
         }
 
         const nextReplayUrl = URL.createObjectURL(blob);
