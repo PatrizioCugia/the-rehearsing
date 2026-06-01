@@ -1,4 +1,4 @@
-# The Rehearsal
+# The Rehearsing
 
 > **An affectionate homage.** This project is heavily inspired by *The Rehearsal*, the HBO series created by Nathan Fielder, and its premise of rehearsing trivial life moments with absurd, obsessive rigor. We borrow that spirit — the deadpan tone, the over-prepared staging, the gravity applied to nothing — as a tribute. The coach's voice and persona here are original, not an impersonation, and this project is an independent, unaffiliated fan homage, not associated with or endorsed by Nathan Fielder or HBO.
 
