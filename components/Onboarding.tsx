@@ -21,7 +21,7 @@ export default function Onboarding(props: {
   const locationRef = useRef<string>("");
 
   const startImageGen = useCallback((location: string, description: string) => {
-    imagePromiseRef.current = fetch("/api/image", {
+    const imageFetch = fetch("/api/image", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ location, description }),
@@ -32,6 +32,11 @@ export default function Onboarding(props: {
         return j.image ?? null;
       })
       .catch(() => null);
+    // Demo safety: bound the image wait. If Gemini hangs, we proceed without it.
+    const timeout = new Promise<string | null>((resolve) =>
+      setTimeout(() => resolve(null), 30_000)
+    );
+    imagePromiseRef.current = Promise.race([imageFetch, timeout]);
   }, []);
 
   const submitLocation = useCallback(() => {
@@ -55,20 +60,23 @@ export default function Onboarding(props: {
 
     setComposingBeat("Composing the scene.");
 
-    const scenarioPromise = fetch("/api/scenario", {
+    const scenarioFallback: Scenario = {
+      title: "An interaction the person has decided to prepare for.",
+      scenePartnerLine: "Have a seat.",
+      framing: "The details could not be composed. The rehearsal will proceed.",
+    };
+    const scenarioFetch = fetch("/api/scenario", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ location: locationRef.current, description: text }),
     })
       .then(async (r) => (await r.json()) as Scenario)
-      .catch(
-        (): Scenario => ({
-          title: "An interaction the person has decided to prepare for.",
-          scenePartnerLine: "Have a seat.",
-          framing:
-            "The details could not be composed. The rehearsal will proceed.",
-        })
-      );
+      .catch((): Scenario => scenarioFallback);
+    // Demo safety: bound the scenario wait too.
+    const scenarioTimeout = new Promise<Scenario>((resolve) =>
+      setTimeout(() => resolve(scenarioFallback), 30_000)
+    );
+    const scenarioPromise = Promise.race([scenarioFetch, scenarioTimeout]);
 
     // Cycle the beat while we wait, so the wait feels intentional.
     const beats = [
