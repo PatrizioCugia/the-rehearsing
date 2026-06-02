@@ -61,6 +61,38 @@ describe("buildCoachUserMessage — history pass-through (stale-closure regressi
   });
 });
 
+describe("buildCoachUserMessage — case background", () => {
+  it("includes the intake background as case context when present", () => {
+    const msg = buildCoachUserMessage({
+      scenario: {
+        ...SCENARIO,
+        background:
+          "The person is asking their manager Ivan for a raise. They report being shy.",
+      },
+      takeNumber: 1,
+      history: [],
+      inter1: baseInter1,
+      mode: "continuing",
+      thresholdCqi: 75,
+    });
+    expect(msg).toContain("Case background");
+    expect(msg).toContain("Ivan");
+    expect(msg).toContain("shy");
+  });
+
+  it("omits the background line entirely when not provided", () => {
+    const msg = buildCoachUserMessage({
+      scenario: SCENARIO,
+      takeNumber: 1,
+      history: [],
+      inter1: baseInter1,
+      mode: "continuing",
+      thresholdCqi: 75,
+    });
+    expect(msg).not.toContain("Case background");
+  });
+});
+
 describe("buildCoachUserMessage — threshold logic", () => {
   it("adds the stop-context note when CQI >= 75 and mode is continuing", () => {
     const inter1 = {

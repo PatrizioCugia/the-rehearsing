@@ -12,6 +12,7 @@ import { fetchWithTimeout } from "@/lib/fetch-timeout";
 import Curve from "./Curve";
 import TypedText from "./TypedText";
 import ProceduralBackdrop from "./ProceduralBackdrop";
+import Masthead from "./Masthead";
 
 type Status =
   | "idle"
@@ -54,8 +55,13 @@ export default function Recorder(props: {
   takes: Take[];
   onTakeComplete: (take: Take) => void;
   onQuit: () => void;
+  onRestart: () => void;
 }) {
-  const { scenario, setImageUrl, takes, onTakeComplete, onQuit } = props;
+  const { scenario, setImageUrl, takes, onTakeComplete, onQuit, onRestart } =
+    props;
+  // The take being set up / recorded right now. Used for "Begin take N", the
+  // file name, and the analyze call — all of which run before the take is
+  // committed to history.
   const takeNumber = takes.length + 1;
 
   const [status, setStatus] = useState<Status>("idle");
@@ -112,17 +118,52 @@ export default function Recorder(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // When playback begins, start both video and audio.
+  // When playback begins, start video and the voiceover together. MediaRecorder
+  // webm blobs often report no/Infinite duration until they've loaded, so
+  // seeking to 0 before the video is ready can be silently ignored — gate the
+  // start on the video being playable so the voiceover lands over the footage
+  // rather than drifting ahead of it.
   useEffect(() => {
     if (status !== "playback") return;
     const v = replayVideoRef.current;
-    const a = audioRef.current;
-    if (!v || !a) return;
-    v.currentTime = 0;
-    a.currentTime = 0;
-    v.muted = true;
-    v.play().catch(() => {});
-    a.play().catch(() => {});
+    const a = audioRef.current; // may be null when TTS was skipped
+
+    let cancelled = false;
+
+    // Drive each medium off its OWN readiness. The voiceover must not be gated
+    // on the video: on a re-take the <video> element can already be past
+    // `loadeddata`, so a video-only listener never fires again and the audio is
+    // left orphaned (the bug). Mirror Summary's per-element canplay gate.
+    const startVideo = () => {
+      if (cancelled || !v) return;
+      try {
+        v.currentTime = 0;
+      } catch {
+        // duration not yet known; play() will start from 0 anyway
+      }
+      v.muted = true;
+      v.play().catch(() => {});
+    };
+    const startAudio = () => {
+      if (cancelled || !a) return;
+      a.currentTime = 0;
+      a.play().catch(() => {});
+    };
+
+    if (v) {
+      if (v.readyState >= 2 /* HAVE_CURRENT_DATA */) startVideo();
+      else v.addEventListener("loadeddata", startVideo, { once: true });
+    }
+    if (a) {
+      if (a.readyState >= 2) startAudio();
+      else a.addEventListener("canplay", startAudio, { once: true });
+    }
+
+    return () => {
+      cancelled = true;
+      if (v) v.removeEventListener("loadeddata", startVideo);
+      if (a) a.removeEventListener("canplay", startAudio);
+    };
   }, [status, replayUrl, audioUrl]);
 
   const tick = useCallback(() => {
@@ -196,7 +237,14 @@ export default function Recorder(props: {
         );
         if (!r1.ok) throw new Error(`analyze failed: ${r1.status}`);
         const inter1Raw = await r1.json();
+        // Lean strip for the HUD (type/time only). Rich strip keeps rationale +
+        // probability so the stored take — and thus the cross-take history and
+        // the Summary's final assessment — still has the quoted speech to work
+        // with. The coach server re-strips per USE_RATIONALE either way.
         const stripped = stripInter1Payload(inter1Raw);
+        const strippedRich = stripInter1Payload(inter1Raw, {
+          includeRationale: true,
+        });
         setCurrentStripped(stripped);
 
         // Build history payload from prior takes.
@@ -218,7 +266,10 @@ export default function Recorder(props: {
               scenario,
               takeNumber,
               history: historyForCoach,
-              inter1: stripped,
+              // Send the raw payload so the server can decide whether to keep
+              // rationale/probability based on USE_RATIONALE. Stripping on the
+              // client would discard the quoted speech the rich coach needs.
+              inter1: inter1Raw,
               mode: "continuing",
               thresholdCqi: THRESHOLD_CQI,
             }),
@@ -255,11 +306,13 @@ export default function Recorder(props: {
         setAudioUrl(nextAudioUrl);
         setReport(reportText);
 
-        // Commit the take to history.
+        // Commit the take to history. Store the rich signals (with rationale)
+        // so the Summary's final assessment and cross-take history retain the
+        // quoted speech.
         const cqiOverall = stripped.conversation_quality?.overall?.quality_index;
         const take: Take = {
           takeNumber,
-          signals: stripped.signals,
+          signals: strippedRich.signals,
           engagement: stripped.engagement_state,
           cqi: stripped.conversation_quality,
           cqiOverall: typeof cqiOverall === "number" ? cqiOverall : undefined,
@@ -303,33 +356,52 @@ export default function Recorder(props: {
       THRESHOLD_CQI;
 
   return (
-    <div className="w-full max-w-6xl mx-auto p-6 md:p-10 space-y-5">
+    <div className="w-full max-w-7xl mx-auto p-6 md:p-10 space-y-5">
       <header className="flex items-start justify-between gap-4">
         <div>
+          <Masthead className="mb-4" />
           <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-neutral-500">
-            Rehearsal № <span className="text-neutral-300">{String(takeNumber).padStart(2, "0")}</span>
+            Rehearsal №{" "}
+            <span className="text-neutral-300">
+              {String(status === "playback" ? takes.length : takeNumber).padStart(2, "0")}
+            </span>
           </p>
           <h1 className="text-2xl md:text-3xl font-semibold mt-2 leading-tight tracking-tight">
             {scenario.title}
           </h1>
-          <p className="text-sm text-neutral-400 mt-3 max-w-2xl leading-relaxed">
-            {scenario.framing}
-          </p>
         </div>
-        {takes.length > 0 && (
+        <div className="flex items-center gap-4 self-start">
+          {takes.length > 0 && (
+            <button
+              onClick={onQuit}
+              aria-label="End the rehearsal session and view the summary"
+              className="text-xs text-neutral-500 hover:text-neutral-300 whitespace-nowrap"
+            >
+              end the session
+            </button>
+          )}
           <button
-            onClick={onQuit}
-            aria-label="End the rehearsal session and view the summary"
-            className="text-xs text-neutral-500 hover:text-neutral-300 self-start whitespace-nowrap"
+            onClick={() => {
+              if (
+                takes.length === 0 ||
+                window.confirm(
+                  "Discard this session and start over from the beginning?"
+                )
+              ) {
+                onRestart();
+              }
+            }}
+            aria-label="Discard this session and start a new scenario"
+            className="text-xs text-neutral-500 hover:text-neutral-300 whitespace-nowrap"
           >
-            end the session
+            start over
           </button>
-        )}
+        </div>
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Set image */}
-        <div className="aspect-[4/5] md:aspect-auto md:h-full rounded-lg border border-neutral-800 bg-neutral-950 overflow-hidden relative">
+        <div className="aspect-video rounded-lg border border-neutral-800 bg-neutral-950 overflow-hidden relative">
           {setImageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -351,7 +423,7 @@ export default function Recorder(props: {
         </div>
 
         {/* Webcam + corner signal panel */}
-        <div className="aspect-video md:aspect-auto md:h-full relative rounded-lg border border-neutral-800 bg-black overflow-hidden">
+        <div className="aspect-video relative rounded-lg border border-neutral-800 bg-black overflow-hidden">
           <video
             ref={liveVideoRef}
             autoPlay
@@ -487,7 +559,7 @@ export default function Recorder(props: {
           <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-neutral-500 mb-4">
             Rehearsal Report —{" "}
             <span className="text-neutral-300">
-              take {String(takeNumber).padStart(2, "0")}
+              take {String(takes.length).padStart(2, "0")}
             </span>
           </p>
           <p className="text-neutral-100 text-[15px] leading-[1.75]">
@@ -496,7 +568,7 @@ export default function Recorder(props: {
         </div>
       )}
 
-      {takes.length >= 2 && status === "playback" && <Curve takes={takes} />}
+      {takes.length >= 1 && status === "playback" && <Curve takes={takes} />}
 
       {audioUrl && (
         <audio ref={audioRef} src={audioUrl} className="hidden" preload="auto" />

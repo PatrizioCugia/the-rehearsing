@@ -2,14 +2,15 @@
 
 import { useCallback, useRef, useState } from "react";
 import type { Scenario } from "@/lib/scenario";
-import { PRESETS, type Preset } from "@/lib/presets";
+import Masthead from "./Masthead";
 
-type Step = "location" | "description" | "composing";
+type Step = "scene" | "description" | "composing";
 
 type Msg = { from: "coach" | "user"; text: string };
 
-const Q1 = "Where does this rehearsal take place.";
-const Q2 = "Now describe yourself and what you are rehearsing. Be specific.";
+const Q1 =
+  "Where does this rehearsal take place, and who is your scene partner. Describe them.";
+const Q2 = "Now describe what you are rehearsing. Be specific.";
 
 const SCENARIO_FALLBACK: Scenario = {
   title: "An interaction the person has decided to prepare for.",
@@ -20,18 +21,18 @@ const SCENARIO_FALLBACK: Scenario = {
 export default function Onboarding(props: {
   onDone: (result: { scenario: Scenario; imageUrl: string | null }) => void;
 }) {
-  const [step, setStep] = useState<Step>("location");
+  const [step, setStep] = useState<Step>("scene");
   const [messages, setMessages] = useState<Msg[]>([{ from: "coach", text: Q1 }]);
   const [draft, setDraft] = useState("");
   const [composingBeat, setComposingBeat] = useState<string>("Composing the scene.");
   const imagePromiseRef = useRef<Promise<string | null> | null>(null);
-  const locationRef = useRef<string>("");
+  const sceneRef = useRef<string>("");
 
-  const startImageGen = useCallback((location: string, description: string) => {
+  const startImageGen = useCallback((scene: string) => {
     const imageFetch = fetch("/api/image", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ location, description }),
+      body: JSON.stringify({ scene }),
     })
       .then(async (r) => {
         if (!r.ok) return null;
@@ -68,14 +69,15 @@ export default function Onboarding(props: {
     []
   );
 
-  const submitLocation = useCallback(() => {
+  const submitScene = useCallback(() => {
     const text = draft.trim();
     if (!text) return;
-    locationRef.current = text;
+    sceneRef.current = text;
     setMessages((m) => [...m, { from: "user", text }, { from: "coach", text: Q2 }]);
     setDraft("");
-    // Fire image generation now with the location, so it's in flight while the user types Q2.
-    startImageGen(text, "rehearsal preparation");
+    // Fire image generation now that we have the scene + partner, so it's in
+    // flight while the user types the final answer.
+    startImageGen(text);
     setStep("description");
   }, [draft, startImageGen]);
 
@@ -89,7 +91,10 @@ export default function Onboarding(props: {
     const scenarioFetch = fetch("/api/scenario", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ location: locationRef.current, description: text }),
+      body: JSON.stringify({
+        scene: sceneRef.current,
+        description: text,
+      }),
     })
       .then(async (r) => (await r.json()) as Scenario)
       .catch((): Scenario => SCENARIO_FALLBACK);
@@ -108,23 +113,12 @@ export default function Onboarding(props: {
     props.onDone({ scenario, imageUrl });
   }, [draft, props, cycleBeatsWhile]);
 
-  const selectPreset = useCallback(
-    async (preset: Preset) => {
-      setStep("composing");
-      startImageGen(preset.location, preset.description);
-      const result = await cycleBeatsWhile(
-        imagePromiseRef.current ?? Promise.resolve<string | null>(null)
-      );
-      props.onDone({ scenario: preset.scenario, imageUrl: result });
-    },
-    [startImageGen, cycleBeatsWhile, props]
-  );
-
-  const onSubmit = step === "location" ? submitLocation : submitDescription;
+  const onSubmit = step === "scene" ? submitScene : submitDescription;
 
   return (
     <div className="w-full max-w-2xl mx-auto p-6 md:p-10 flex flex-col gap-6 min-h-screen">
       <header>
+        <Masthead className="mb-4" />
         <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-neutral-500">
           Rehearsal — Intake
         </p>
@@ -152,28 +146,6 @@ export default function Onboarding(props: {
           </div>
         )}
       </div>
-
-      {step === "location" && (
-        <div className="space-y-3">
-          <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-neutral-500">
-            Or select one of the prepared rehearsals.
-          </p>
-          <div className="flex flex-col gap-2">
-            {PRESETS.map((p, i) => (
-              <button
-                key={p.id}
-                onClick={() => selectPreset(p)}
-                className="text-left px-4 py-3 rounded-lg border border-neutral-800 bg-neutral-950 text-neutral-200 hover:bg-neutral-900 hover:border-neutral-700 text-sm flex items-baseline gap-3"
-              >
-                <span className="font-mono text-[10px] text-neutral-600">
-                  {String(i + 1).padStart(2, "0")}
-                </span>
-                <span>{p.label}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
 
       {step !== "composing" && (
         <form

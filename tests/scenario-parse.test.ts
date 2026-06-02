@@ -19,6 +19,30 @@ describe("tryParseScenario", () => {
     });
   });
 
+  it("keeps the optional background note when present", () => {
+    const json = JSON.stringify({
+      title: "Asking for a raise.",
+      scenePartnerLine: "Hey, you wanted to talk.",
+      framing: "It will be over in four minutes.",
+      background:
+        "The person is asking their manager Ivan for a raise. They report being shy and note they made the company money last quarter.",
+    });
+    const out = tryParseScenario(json);
+    expect(out?.background).toContain("Ivan");
+    expect(out?.background).toContain("shy");
+  });
+
+  it("omits background when it is an empty string", () => {
+    const json = JSON.stringify({
+      title: "A.",
+      scenePartnerLine: "B.",
+      framing: "C.",
+      background: "   ",
+    });
+    const out = tryParseScenario(json);
+    expect(out).not.toHaveProperty("background");
+  });
+
   it("strips ```json ... ``` code fences before parsing", () => {
     const fenced = '```json\n{"title":"A","scenePartnerLine":"B","framing":"C"}\n```';
     const out = tryParseScenario(fenced);

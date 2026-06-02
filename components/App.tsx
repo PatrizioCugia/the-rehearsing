@@ -107,6 +107,7 @@ export default function App() {
       takes={takes}
       onTakeComplete={handleTakeComplete}
       onQuit={handleQuit}
+      onRestart={handleNewSession}
     />
   );
 }

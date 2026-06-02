@@ -31,6 +31,9 @@ export function tryParseScenario(text: string): Scenario | null {
         title: obj.title,
         scenePartnerLine: obj.scenePartnerLine,
         framing: obj.framing,
+        ...(typeof obj.background === "string" && obj.background.trim()
+          ? { background: obj.background.trim() }
+          : {}),
       };
     }
   } catch {

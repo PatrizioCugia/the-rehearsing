@@ -48,9 +48,9 @@ export async function POST(req: NextRequest) {
     const json = JSON.parse(text);
     return NextResponse.json(json, { status: res.status });
   } catch {
-    return NextResponse.json(
-      { error: "upstream_non_json", status: res.status, body: text.slice(0, 500) },
-      { status: 502 }
+    console.error(
+      `[analyze] upstream non-JSON ${res.status}: ${text.slice(0, 500)}`
     );
+    return NextResponse.json({ error: "upstream_non_json" }, { status: 502 });
   }
 }

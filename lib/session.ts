@@ -57,13 +57,3 @@ export function clearSession(): void {
     // ignore
   }
 }
-
-export function totalHesitationSeconds(t: Take): number {
-  return t.signals
-    .filter((s) => s.type === "hesitation")
-    .reduce((sum, s) => sum + Math.max(0, s.end - s.start), 0);
-}
-
-export function totalFlaggedSeconds(t: Take): number {
-  return t.signals.reduce((sum, s) => sum + Math.max(0, s.end - s.start), 0);
-}

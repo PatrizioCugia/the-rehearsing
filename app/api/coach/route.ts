@@ -28,7 +28,12 @@ const DEFAULT_THRESHOLD_CQI = 75;
 
 export async function POST(req: NextRequest) {
   let body: {
-    scenario?: { title?: string; framing?: string; scenePartnerLine?: string };
+    scenario?: {
+      title?: string;
+      framing?: string;
+      scenePartnerLine?: string;
+      background?: string;
+    };
     scenarioTitle?: string; // backward compat
     takeNumber?: number;
     history?: unknown;
@@ -86,6 +91,7 @@ export async function POST(req: NextRequest) {
     title: body.scenario?.title ?? body.scenarioTitle ?? "Unknown scenario.",
     framing: body.scenario?.framing ?? "",
     scenePartnerLine: body.scenario?.scenePartnerLine ?? "",
+    background: body.scenario?.background ?? "",
   };
 
   const userMessage = buildCoachUserMessage({
@@ -97,8 +103,14 @@ export async function POST(req: NextRequest) {
     thresholdCqi,
   });
 
+  // Test-only failure injection. Honoured outside production so the fallback
+  // paths can be exercised in dev/CI; ignored entirely in production so a
+  // client can't shape the response by posting _forceFail.
+  const forceFail =
+    process.env.NODE_ENV !== "production" ? body._forceFail : undefined;
+
   try {
-    if (body._forceFail === "throw") {
+    if (forceFail === "throw") {
       throw new Error("forced failure");
     }
 
@@ -117,7 +129,7 @@ export async function POST(req: NextRequest) {
       }),
     });
 
-    if (body._forceFail === "non_ok" || !res.ok) {
+    if (forceFail === "non_ok" || !res.ok) {
       return NextResponse.json(
         {
           report: pickFallbackCoachLine(takeNumber),
@@ -129,7 +141,7 @@ export async function POST(req: NextRequest) {
     }
 
     const text = await res.text();
-    if (body._forceFail === "non_json") {
+    if (forceFail === "non_json") {
       return NextResponse.json(
         {
           report: pickFallbackCoachLine(takeNumber),

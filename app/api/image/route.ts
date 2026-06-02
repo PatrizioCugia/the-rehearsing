@@ -1,52 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readFile, readdir } from "node:fs/promises";
-import { extname, resolve } from "node:path";
 import { isMockMode } from "@/lib/mock";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
-const FACE_DIR = resolve(process.cwd(), "scripts/fixtures/face");
 const MODEL = "nano-banana-pro-preview";
 
-function mimeFor(path: string): string {
-  const e = extname(path).toLowerCase();
-  if (e === ".png") return "image/png";
-  if (e === ".webp") return "image/webp";
-  return "image/jpeg";
-}
-
-async function loadFaceReferences(): Promise<
-  Array<{ inlineData: { mimeType: string; data: string } }>
-> {
-  try {
-    const entries = await readdir(FACE_DIR);
-    const files = entries
-      .filter((f) => /\.(jpe?g|png|webp)$/i.test(f))
-      .map((f) => resolve(FACE_DIR, f))
-      .slice(0, 4);
-    return Promise.all(
-      files.map(async (p) => ({
-        inlineData: {
-          mimeType: mimeFor(p),
-          data: (await readFile(p)).toString("base64"),
-        },
-      }))
-    );
-  } catch {
-    return [];
-  }
-}
-
-function buildPrompt(location: string, description: string): string {
-  // Composition is front-loaded so it survives the long-prompt weight decay.
-  // Laptop failure mode (laptop-on-table, backpack, chest harness) is fought
-  // with explicit negatives, capitalised for emphasis.
+function buildPrompt(scene: string): string {
+  // The image is the scene partner — the person being rehearsed against —
+  // shot point-of-view, as if the viewer is standing across from them mid
+  // conversation. The single `scene` input describes both who the partner is
+  // and where the conversation happens. The subject framing is front-loaded so
+  // it survives long-prompt weight decay.
   return (
-    `A wide establishing shot of ${location}. The same man as in the reference photograph stands in the FAR LEFT THIRD of the frame, SMALL within the wider view, seen full-length — an observer at the edge of the frame, not the subject of the photo. His body is turned three-quarter away. He glances back over his shoulder toward the camera with a mild, blank, slightly caught-off-guard expression, soft and a little awkward.\n\n` +
-    `An open laptop hangs at waist height from a single black strap worn diagonally across his body, over one shoulder and down to the opposite hip — sash-style, like a courier-bag sling. He steadies the laptop lightly with one hand. The laptop is NOT resting on any table, desk, bench, or surface. NO backpack, NO chest harness, NO two-strap rig. The strap is visible only over one shoulder. He wears a plain grey t-shirt and dark trousers.\n\n` +
-    `A large sheet of brown kraft paper is taped up on a wall or surface near him, covered in a hand-drawn flowchart of boxes and arrows, the handwriting loose and not clearly legible. A folding table holds a few scattered printed pages.\n\n` +
-    `Soft, ordinary lighting suited to the environment. Deadpan, quiet, gently absurd mood. Context of the upcoming interaction being rehearsed: ${description}. Candid, naturalistic, documentary-style photograph, 35mm, natural depth of field, as if a still from an observational TV show. Lots of open space and air around the scene. Match the face in the reference photographs closely. Only one person in frame. No text overlays, no captions.`
+    `A candid, naturalistic point-of-view portrait based on this description: ${scene}.\n\n` +
+    `Render the SCENE PARTNER (the person described) in the NEAR FOREGROUND, close to the camera, at a natural conversational distance, FACING THE VIEWER DIRECTLY and making eye contact — as though mid-conversation with the person holding the camera. Their posture and expression are ordinary and attentive, as if they have just been spoken to and are waiting to respond. Eye level, point-of-view shot, framed from roughly the chest up.\n\n` +
+    `Place the described setting behind and around them but softly out of focus with natural shallow depth of field, so the person remains the clear subject. Soft, ordinary lighting suited to the environment. Deadpan, quiet, gently mundane mood.\n\n` +
+    `Photorealistic documentary-style photograph, 35mm, shallow depth of field, as if a still from an observational TV show shot from across a conversation. Only this one person in frame. Do NOT include the viewer or any second person. No text overlays, no captions, no on-screen graphics.`
   );
 }
 
@@ -66,32 +36,29 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let body: { location?: string; description?: string; prompt?: string };
+  let body: { scene?: string; prompt?: string };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
 
-  const location = (body.location ?? "").trim();
-  const description = (body.description ?? "").trim();
+  const scene = (body.scene ?? "").trim();
   const overridePrompt = (body.prompt ?? "").trim();
 
-  // If a full prompt override is supplied (used by presets that ship their
-  // own scene-specific text), use it verbatim. Otherwise build from
-  // location + description for the free-text path.
+  // If a full prompt override is supplied, use it verbatim. Otherwise build
+  // from the combined scene + scene-partner description.
   let prompt: string;
   if (overridePrompt) {
     prompt = overridePrompt;
   } else {
-    if (!location) {
-      return NextResponse.json({ error: "missing_location" }, { status: 400 });
+    if (!scene) {
+      return NextResponse.json({ error: "missing_scene" }, { status: 400 });
     }
-    prompt = buildPrompt(location, description);
+    prompt = buildPrompt(scene);
   }
 
   try {
-    const refs = await loadFaceReferences();
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${encodeURIComponent(
       apiKey
     )}`;
@@ -103,7 +70,7 @@ export async function POST(req: NextRequest) {
         contents: [
           {
             role: "user",
-            parts: [{ text: prompt }, ...refs],
+            parts: [{ text: prompt }],
           },
         ],
       }),

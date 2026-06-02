@@ -48,10 +48,8 @@ export async function POST(req: NextRequest) {
 
   if (!res.ok) {
     const t = await res.text();
-    return NextResponse.json(
-      { error: "upstream", status: res.status, body: t.slice(0, 500) },
-      { status: 502 }
-    );
+    console.error(`[tts] upstream ${res.status}: ${t.slice(0, 500)}`);
+    return NextResponse.json({ error: "upstream" }, { status: 502 });
   }
 
   const ab = await res.arrayBuffer();

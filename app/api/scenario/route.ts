@@ -13,23 +13,26 @@ export const maxDuration = 60;
 const FALLBACK = FALLBACK_SCENARIO_API;
 
 export async function POST(req: NextRequest) {
-  let body: { location?: string; description?: string };
+  let body: { scene?: string; description?: string };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
 
-  const location = (body.location ?? "").trim();
+  const scene = (body.scene ?? "").trim();
   const description = (body.description ?? "").trim();
 
   if (isMockMode()) {
     return NextResponse.json(
-      mockScenario({ location: location || "an unspecified location", description })
+      mockScenario({
+        scene: scene || "an unspecified location",
+        description,
+      })
     );
   }
 
-  if (!location || !description) {
+  if (!scene || !description) {
     return NextResponse.json({ error: "missing_fields" }, { status: 400 });
   }
 
@@ -53,7 +56,7 @@ export async function POST(req: NextRequest) {
         messages: [
           {
             role: "user",
-            content: buildScenarioUserMessage({ location, description }),
+            content: buildScenarioUserMessage({ scene, description }),
           },
         ],
       }),
